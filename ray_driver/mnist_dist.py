@@ -1,13 +1,13 @@
 import ray
 import ray.tune as tune
 import tensorflow as tf
-from tf_train_simple.mnist_data_grabber import Data_grab
+from tf_train_simple.mnist_data_grabber import DataGrab
 from tf_train_simple.mnist_model_builder import build_model
 
 
 def train_func(config, reporter):  # add a reporter arg
     my_lr = config["lr"]
-    data = Data_grab('/tmp/ray/tf/mnist/input_data'+str(my_lr))
+    data = DataGrab('/tmp/ray/tf/mnist/input_data' + str(my_lr))
     x, y_, keep_prob, train_step, accuracy = build_model(my_lr)
 
     with tf.Session() as sess:
