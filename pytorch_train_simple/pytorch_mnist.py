@@ -5,8 +5,8 @@ import torch.nn.functional as F
 import torch.optim as optim
 import argparse
 from torchvision import datasets, transforms
-
-
+from pytorch_trim_utils.filter_prune_utils import pruning_conv_filters
+from pytorch_trim_utils.filter_prune_utils import GPU_TARGET, CPU_TARGET
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -58,6 +58,10 @@ def test(args, model, device, test_loader):
         test_loss, correct, len(test_loader.dataset),
         100. * correct / len(test_loader.dataset)))
 
+def trivial_sel(conv, **kwargs):
+    return [3,4,5,6,7]
+
+
 def main():
     # Training settings
     parser = argparse.ArgumentParser(description='PyTorch MNIST Example')
@@ -65,13 +69,13 @@ def main():
                         help='input batch size for training (default: 64)')
     parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                         help='input batch size for testing (default: 1000)')
-    parser.add_argument('--epochs', type=int, default=5, metavar='N',
-                        help='number of epochs to train (default: 5)')
+    parser.add_argument('--epochs', type=int, default=1, metavar='N',
+                        help='number of epochs to train (default: 1)')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                         help='learning rate (default: 0.001)')
     parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
                         help='SGD momentum (default: 0.5)')
-    parser.add_argument('--no-cuda', action='store_true', default=True,
+    parser.add_argument('--no-cuda', action='store_true', default=False,
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
@@ -83,6 +87,7 @@ def main():
     torch.manual_seed(args.seed)
 
     device = torch.device("cuda" if use_cuda else "cpu")
+    print("device type:", device.type)
     kwargs = {'num_workers': 1, 'pin_memory': True} if use_cuda else {}
     train_loader = torch.utils.data.DataLoader(
         datasets.MNIST('../data', train=True, download=True,
@@ -108,56 +113,20 @@ def main():
         train(args, model, device, train_loader, optimizer, epoch)
         test(args, model, device, test_loader)
 
-    # now we have some sort of converged model
-    # we
-    conv2param = model.conv2.parameters()
-    for param in conv2param:
-        print param.data.size()
-    print model.conv2.weight.data.size()
-    print model.conv2.bias.data.size()
-    print model.conv1.weight.data.size()
-    print model.conv1.bias.data.size()
-
-    original_conv1_weight = model.conv1.weight.data.cpu().numpy()
-
-    #print original_conv1_weight
-    print("-----------------------------")
-    conv1_trim_filter_ind = 3
-    conv_trim_number = 5
-    new_conv1 = nn.Conv2d(1, 10-conv_trim_number, kernel_size=5)
-    new_conv1_weight = new_conv1.weight.data.cpu().numpy()
-
-    #print new_conv1_weight
-    print("==============================")
-    new_conv1_weight[:conv1_trim_filter_ind, :, :, :] = original_conv1_weight[:conv1_trim_filter_ind, :, :, :]
-    new_conv1_weight[conv1_trim_filter_ind:, :, :, :] = original_conv1_weight[conv1_trim_filter_ind + conv_trim_number:, :, :, :]
-
-    #print new_conv1.weight.data.numpy()
-
-    original_conv2_weight = model.conv2.weight.data.cpu().numpy()
-    new_conv2 = nn.Conv2d(10-conv_trim_number,20, kernel_size=5)
-    new_conv2_weight = new_conv2.weight.data.cpu().numpy()
-    new_conv2_weight[:,:conv1_trim_filter_ind,:,:] = original_conv2_weight[:,:conv1_trim_filter_ind,:,:]
-    new_conv2_weight[:,conv1_trim_filter_ind:,:,:] = original_conv2_weight[:,conv1_trim_filter_ind+conv_trim_number:,:,:]
+    original_conv1 = model.conv1
+    original_consumers = [model.conv2]
+    new_conv1, [new_consumer_conv] = pruning_conv_filters(src_conv=original_conv1, old_consumers=original_consumers,
+                                                          weight_device=device, selector=trivial_sel)
 
     del model.conv1
     del model.conv2
 
     model.conv1 = new_conv1
-    model.conv2 = new_conv2
-    conv2param = model.conv2.parameters()
-    for param in conv2param:
-        print param.data.size()
-    print model.conv2.weight.data.size()
-    print model.conv2.bias.data.size()
-    print model.conv1.weight.data.size()
-    print model.conv1.bias.data.size()
-
-
+    model.conv2 = new_consumer_conv
     sys.stdin.read(1)
     for param in model.parameters():
-        print param.data.size()
-
+        print(param.data.size())
+    print("press any key to continue")
     sys.stdin.read(1)
     test(args, model, device, test_loader)
     optimizer = optim.Adam(model.parameters(),lr=args.lr)
@@ -165,12 +134,6 @@ def main():
     for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch)
         test(args, model, device, test_loader)
-
-    # modify to
-    # model.conv1.weight.data
-    # model.conv1.bias.data
-
-    # model.conv2.weight.data
 
 
 if __name__ == '__main__':
