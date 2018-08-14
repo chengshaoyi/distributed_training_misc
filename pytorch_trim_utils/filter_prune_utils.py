@@ -6,45 +6,59 @@ import torch
 CPU_TARGET = "cpu"
 GPU_TARGET = "cuda"
 
+# enum for conv coefficients
+CONV_WEIGHT = 0
+CONV_BIAS = 1
+
+TRIM_OUTER = 0
+TRIM_INNER = 1
+
+
+def populate_pruned_conv_coe_tensor(src_conv, new_src_conv, filter_removal_indices_ordered,
+                                    weight_device, trim_dim,
+                                    coe_type):
+    assert trim_dim == TRIM_INNER or trim_dim == TRIM_OUTER, 'unrecognized trim dim'
+    assert coe_type == CONV_WEIGHT or coe_type == CONV_BIAS, 'unrecognized coe type'
+    original_conv_coe = get_conv_coe_handle(src_conv, coe_type)
+    new_conv_coe = get_conv_coe_handle(new_src_conv, coe_type)
+    if trim_dim == TRIM_OUTER:
+        original_conv_coe_trimmed = generate_trimed_weight_at_axis(original_conv_coe,
+                                                                   filter_removal_indices_ordered,
+                                                                   axis=0)
+    elif trim_dim == TRIM_INNER and coe_type == CONV_WEIGHT:
+        original_conv_coe_trimmed = generate_trimed_weight_at_axis(original_conv_coe,
+                                                                   filter_removal_indices_ordered,
+                                                                   axis=1)
+    else:
+        original_conv_coe_trimmed = original_conv_coe
+    new_conv_coe[...] = original_conv_coe_trimmed
+    commit_conv_coe(new_src_conv, new_conv_coe, weight_device, coe_type)
+
 
 def populate_pruned_conv_src_consumer_layers(src_conv, new_src_conv, old_consumers, new_consumers,
                                              filter_removal_indices_ordered, weight_device):
-    original_conv_weight = get_conv_weight_handle(src_conv)
-    new_conv_weight = get_conv_weight_handle(new_src_conv)
-    original_conv_weight_trimmed = generate_trimed_weight_at_axis(original_conv_weight,
-                                                                  filter_removal_indices_ordered,
-                                                                  axis=0)
-    new_conv_weight[...] = original_conv_weight_trimmed
-    commit_conv_weight(new_src_conv, new_conv_weight, weight_device)
-
+    populate_pruned_conv_coe_tensor(src_conv, new_src_conv, filter_removal_indices_ordered, weight_device, TRIM_OUTER,
+                                    CONV_WEIGHT)
     if src_conv.bias is not None:
-        original_conv_bias = src_conv.bias.data.cpu().numpy()
-        original_conv_bias_trimmed = generate_trimed_weight_at_axis(original_conv_bias,
-                                                                    filter_removal_indices_ordered,
-                                                                    axis=0)
-        new_conv_bias = new_src_conv.bias.data.cpu().numpy()
-        new_conv_bias[...] = original_conv_bias_trimmed
-        if weight_device.type == GPU_TARGET:
-            new_src_conv.bias.data = torch.from_numpy(new_conv_bias).cuda()
-
+        populate_pruned_conv_coe_tensor(src_conv, new_src_conv, filter_removal_indices_ordered,
+                                        weight_device, TRIM_OUTER, CONV_BIAS)
+        
     for old_consumer_conv, new_consumer_conv in zip(old_consumers, new_consumers):
-        original_consumer_weight = get_conv_weight_handle(old_consumer_conv)
-        new_consumer_weight = get_conv_weight_handle(new_consumer_conv)
-        original_consumer_weight_trimmed = generate_trimed_weight_at_axis(original_consumer_weight,
-                                                                          filter_removal_indices_ordered,
-                                                                          axis=1)
-        new_consumer_weight[...] = original_consumer_weight_trimmed
-        commit_conv_weight(new_consumer_conv, new_consumer_weight, weight_device)
+        populate_pruned_conv_coe_tensor(old_consumer_conv, new_consumer_conv, filter_removal_indices_ordered,
+                                        weight_device, TRIM_INNER, CONV_WEIGHT)
+        if old_consumer_conv.bias is not None:
+            populate_pruned_conv_coe_tensor(old_consumer_conv, new_consumer_conv, filter_removal_indices_ordered,
+                                            weight_device, TRIM_INNER, CONV_BIAS)
 
 
-def init_pruned_conv_src_consumer_layers(src_conv, consumers, weight_device, filter_indices_removal_ordered):
+def duplicate_prune_conv_src_consumer_layers(src_conv, consumers, weight_device, filter_indices_removal_ordered):
     """
-    Create a pruned version the src ocnv layer and the consumer conv layers, with all the
+    Create a pruned version the src ocnv layer and the consumer conv layers,
     :param src_conv:
     :param consumers:
     :param weight_device:
     :param filter_indices_removal_ordered:
-    :return:
+    :return: the new producer conv layer and the list of new consumers of this new conv layer
     """
     # for now we just delete filters
     assert isinstance(src_conv, nn.Conv2d)
@@ -65,6 +79,8 @@ def init_pruned_conv_src_consumer_layers(src_conv, consumers, weight_device, fil
         for consumer in consumers]
     for consumer_dup in consumers_dup:
         consumer_dup.to(weight_device)
+    populate_pruned_conv_src_consumer_layers(src_conv,src_conv_dup,consumers,consumers_dup,
+                                             filter_indices_removal_ordered,weight_device)
 
     return src_conv_dup, consumers_dup
 
@@ -85,13 +101,23 @@ def generate_trimed_weight_at_axis(old_weight_raw, filter_indices_for_removal, a
     return new_weight
 
 
-def get_conv_weight_handle(conv):
-    return conv.weight.data.cpu().numpy()
+def get_conv_coe_handle(conv, coe_type):
+    if coe_type == CONV_WEIGHT:
+        return conv.weight.data.cpu().numpy()
+    elif coe_type == CONV_BIAS:
+        return conv.bias.data.cpu().numpy()
+    else:
+        assert False, 'unrecognized coefficient type in conv layers'
 
 
-def commit_conv_weight(conv, weights, target_device):
+def commit_conv_coe(conv, coefficients, target_device, coe_type):
     if target_device.type == GPU_TARGET:
-        conv.weight.data = torch.from_numpy(weights).cuda()
+        if coe_type == CONV_WEIGHT:
+            conv.weight.data = torch.from_numpy(coefficients).cuda()
+        elif coe_type == CONV_BIAS:
+            conv.bias.data = torch.from_numpy(coefficients).cuda()
+        else:
+            assert False, 'unrecognized coefficient type in conv layers'
 
 
 def pruning_conv_filters(src_conv, old_consumers, weight_device, selector, **kwarg):
@@ -99,7 +125,9 @@ def pruning_conv_filters(src_conv, old_consumers, weight_device, selector, **kwa
     Prune a conv layer at filter granularity, and also update its downstream consumers
     (Right now it only supports conv layers as consumers)
     which filters to erase depends on the selector function.
-    :param conv_and_consumers: a tuple of (producer conv, [list of consumer layers for the conv])
+    :param src_conv: producer conv
+    :param old_consumers: [list of consumer layers for the producer conv]
+    :param weight_device: where does the layer/weight live (cpu or cuda)
     :param selector: return a list of integers, indicating which filter to throw away in the conv layer
     :param kwarg: arguments to selector
     :return: new tuple of (producer conv, [list of consumer layers for the conv])
@@ -108,36 +136,8 @@ def pruning_conv_filters(src_conv, old_consumers, weight_device, selector, **kwa
     filter_removal_indices_cleaned = list(OrderedDict.fromkeys(filter_indices_to_remove))
     filter_removal_indices_ordered = sorted(filter_removal_indices_cleaned)
 
-    new_src_conv, new_consumers = init_pruned_conv_src_consumer_layers(src_conv, old_consumers, weight_device,
-                                                                       filter_removal_indices_ordered)
-
-
-    original_conv_weight = get_conv_weight_handle(src_conv)
-    new_conv_weight = get_conv_weight_handle(new_src_conv)
-    original_conv_weight_trimmed = generate_trimed_weight_at_axis(original_conv_weight,
-                                                                  filter_removal_indices_ordered,
-                                                                  axis=0)
-    new_conv_weight[...] = original_conv_weight_trimmed
-    commit_conv_weight(new_src_conv, new_conv_weight, weight_device)
-
-    if src_conv.bias is not None:
-        original_conv_bias = src_conv.bias.data.cpu().numpy()
-        original_conv_bias_trimmed = generate_trimed_weight_at_axis(original_conv_bias,
-                                                                    filter_removal_indices_ordered,
-                                                                    axis=0)
-        new_conv_bias = new_src_conv.bias.data.cpu().numpy()
-        new_conv_bias[...] = original_conv_bias_trimmed
-        if weight_device.type == GPU_TARGET:
-            new_src_conv.bias.data = torch.from_numpy(new_conv_bias).cuda()
-
-    for old_consumer_conv, new_consumer_conv in zip(old_consumers, new_consumers):
-        original_consumer_weight = get_conv_weight_handle(old_consumer_conv)
-        new_consumer_weight = get_conv_weight_handle(new_consumer_conv)
-        original_consumer_weight_trimmed = generate_trimed_weight_at_axis(original_consumer_weight,
-                                                                          filter_removal_indices_ordered,
-                                                                          axis=1)
-        new_consumer_weight[...] = original_consumer_weight_trimmed
-        commit_conv_weight(new_consumer_conv, new_consumer_weight, weight_device)
+    new_src_conv, new_consumers = duplicate_prune_conv_src_consumer_layers(src_conv, old_consumers, weight_device,
+                                                                           filter_removal_indices_ordered)
     return new_src_conv, new_consumers
 
 
