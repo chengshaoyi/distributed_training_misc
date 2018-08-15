@@ -42,13 +42,15 @@ def populate_pruned_conv_src_consumer_layers(src_conv, new_src_conv, old_consume
     if src_conv.bias is not None:
         populate_pruned_conv_coe_tensor(src_conv, new_src_conv, filter_removal_indices_ordered,
                                         weight_device, TRIM_OUTER, CONV_BIAS)
-        
+
     for old_consumer_conv, new_consumer_conv in zip(old_consumers, new_consumers):
         populate_pruned_conv_coe_tensor(old_consumer_conv, new_consumer_conv, filter_removal_indices_ordered,
                                         weight_device, TRIM_INNER, CONV_WEIGHT)
         if old_consumer_conv.bias is not None:
             populate_pruned_conv_coe_tensor(old_consumer_conv, new_consumer_conv, filter_removal_indices_ordered,
                                             weight_device, TRIM_INNER, CONV_BIAS)
+
+
 
 
 def duplicate_prune_conv_src_consumer_layers(src_conv, consumers, weight_device, filter_indices_removal_ordered):
@@ -60,7 +62,8 @@ def duplicate_prune_conv_src_consumer_layers(src_conv, consumers, weight_device,
     :param filter_indices_removal_ordered:
     :return: the new producer conv layer and the list of new consumers of this new conv layer
     """
-    # for now we just delete filters
+    # for now we just delete filters from conv2d layers
+    # we migh want to accommodate dw conv
     assert isinstance(src_conv, nn.Conv2d)
     assert all(isinstance(consumer, nn.Conv2d) for consumer in consumers)
     num_filters_to_remove = len(filter_indices_removal_ordered)
@@ -120,13 +123,13 @@ def commit_conv_coe(conv, coefficients, target_device, coe_type):
             assert False, 'unrecognized coefficient type in conv layers'
 
 
-def pruning_conv_filters(src_conv, old_consumers, weight_device, selector, **kwarg):
+def pruning_conv_filters(src_conv, consumer_convs, weight_device, selector, **kwarg):
     """
     Prune a conv layer at filter granularity, and also update its downstream consumers
     (Right now it only supports conv layers as consumers)
     which filters to erase depends on the selector function.
     :param src_conv: producer conv
-    :param old_consumers: [list of consumer layers for the producer conv]
+    :param consumer_convs: [list of consumer layers for the producer conv]
     :param weight_device: where does the layer/weight live (cpu or cuda)
     :param selector: return a list of integers, indicating which filter to throw away in the conv layer
     :param kwarg: arguments to selector
@@ -136,7 +139,7 @@ def pruning_conv_filters(src_conv, old_consumers, weight_device, selector, **kwa
     filter_removal_indices_cleaned = list(OrderedDict.fromkeys(filter_indices_to_remove))
     filter_removal_indices_ordered = sorted(filter_removal_indices_cleaned)
 
-    new_src_conv, new_consumers = duplicate_prune_conv_src_consumer_layers(src_conv, old_consumers, weight_device,
+    new_src_conv, new_consumers = duplicate_prune_conv_src_consumer_layers(src_conv, consumer_convs, weight_device,
                                                                            filter_removal_indices_ordered)
     return new_src_conv, new_consumers
 

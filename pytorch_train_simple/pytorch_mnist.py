@@ -6,7 +6,7 @@ import torch.optim as optim
 import argparse
 from torchvision import datasets, transforms
 from pytorch_trim_utils.filter_prune_utils import pruning_conv_filters
-from pytorch_trim_utils.filter_prune_utils import GPU_TARGET, CPU_TARGET
+from pytorch_trim_utils.filter_select_utils import magnitude_based_filter_select
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
@@ -69,8 +69,8 @@ def main():
                         help='input batch size for training (default: 64)')
     parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                         help='input batch size for testing (default: 1000)')
-    parser.add_argument('--epochs', type=int, default=1, metavar='N',
-                        help='number of epochs to train (default: 1)')
+    parser.add_argument('--epochs', type=int, default=4, metavar='N',
+                        help='number of epochs to train (default: 4)')
     parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
                         help='learning rate (default: 0.001)')
     parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
@@ -115,8 +115,9 @@ def main():
 
     original_conv1 = model.conv1
     original_consumers = [model.conv2]
-    new_conv1, [new_consumer_conv] = pruning_conv_filters(src_conv=original_conv1, old_consumers=original_consumers,
-                                                          weight_device=device, selector=trivial_sel)
+    new_conv1, [new_consumer_conv] = pruning_conv_filters(src_conv=original_conv1, consumer_convs=original_consumers,
+                                                          weight_device=device, selector=magnitude_based_filter_select,
+                                                          num=6 )
 
     del model.conv1
     del model.conv2
@@ -134,6 +135,12 @@ def main():
     for epoch in range(1, args.epochs + 1):
         train(args, model, device, train_loader, optimizer, epoch)
         test(args, model, device, test_loader)
+
+    # now the prune the second conv
+    print("press any key to continue")
+    sys.stdin.read(1)
+    test(args, model, device, test_loader)
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
 
 
 if __name__ == '__main__':
