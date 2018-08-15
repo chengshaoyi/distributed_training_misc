@@ -1,0 +1,4 @@
+SRC_LAYER = 0
+DST_LAYER = 1
+CPU_TARGET = "cpu"
+GPU_TARGET = "cuda"

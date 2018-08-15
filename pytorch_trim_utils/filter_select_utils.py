@@ -1,5 +1,4 @@
-from pytorch_trim_utils.filter_prune_utils import get_conv_coe_handle
-from pytorch_trim_utils.filter_prune_utils import CONV_WEIGHT, CONV_BIAS
+from pytorch_trim_utils.layer_pruning_utils import CONV_WEIGHT, CONV_BIAS, get_conv_coe_handle
 import numpy as np
 
 def magnitude_based_filter_select(conv, **kwargs):

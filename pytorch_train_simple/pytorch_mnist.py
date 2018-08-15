@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import argparse
 from torchvision import datasets, transforms
-from pytorch_trim_utils.filter_prune_utils import pruning_conv_filters
+from pytorch_trim_utils.prune_utils import pruning_conv_filters
 from pytorch_trim_utils.filter_select_utils import magnitude_based_filter_select
 class Net(nn.Module):
     def __init__(self):
@@ -69,10 +69,10 @@ def main():
                         help='input batch size for training (default: 64)')
     parser.add_argument('--test-batch-size', type=int, default=1000, metavar='N',
                         help='input batch size for testing (default: 1000)')
-    parser.add_argument('--epochs', type=int, default=4, metavar='N',
-                        help='number of epochs to train (default: 4)')
-    parser.add_argument('--lr', type=float, default=0.001, metavar='LR',
-                        help='learning rate (default: 0.001)')
+    parser.add_argument('--epochs', type=int, default=1, metavar='N',
+                        help='number of epochs to train (default: 1)')
+    parser.add_argument('--lr', type=float, default=0.0005, metavar='LR',
+                        help='learning rate (default: 0.0005)')
     parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
                         help='SGD momentum (default: 0.5)')
     parser.add_argument('--no-cuda', action='store_true', default=False,
