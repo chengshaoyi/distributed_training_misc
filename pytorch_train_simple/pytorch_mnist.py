@@ -7,6 +7,7 @@ import argparse
 from torchvision import datasets, transforms
 from pytorch_trim_utils.prune_utils import pruning_conv_filters
 from pytorch_trim_utils.filter_select_utils import magnitude_based_filter_select
+
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()

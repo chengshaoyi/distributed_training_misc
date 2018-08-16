@@ -16,24 +16,17 @@ def duplicate_prune_conv_src_consumer_layers(src_conv, consumers, weight_device,
     :param filter_indices_removal_ordered:
     :return: the new producer conv layer and the list of new consumers of this new conv layer
     """
-    # for now we just delete filters from conv2d layers
-    # we migh want to accommodate dw conv
-    assert isinstance(src_conv, nn.Conv2d)
-    assert all(isinstance(consumer, nn.Conv2d) or isinstance(consumer, nn.Linear) for consumer in consumers)
     src_conv_dup = init_pruned_layer(src_conv, weight_device, filter_indices_removal_ordered, SRC_LAYER)
 
     consumers_dup = []
     for consumer in consumers:
-        if isinstance(consumer, nn.Conv2d):
-            cur_consumer_dup = init_pruned_layer(consumer, weight_device, filter_indices_removal_ordered, DST_LAYER)
-        elif isinstance(consumer, nn.Linear):
-            pass
+        cur_consumer_dup = init_pruned_layer(consumer, weight_device, filter_indices_removal_ordered,
+                                             DST_LAYER, src_conv)
         cur_consumer_dup.to(weight_device)
         consumers_dup.append(cur_consumer_dup)
 
     populate_pruned_conv_src_consumer_layers(src_conv, src_conv_dup, consumers, consumers_dup,
                                              filter_indices_removal_ordered, weight_device)
-
     return src_conv_dup, consumers_dup
 
 

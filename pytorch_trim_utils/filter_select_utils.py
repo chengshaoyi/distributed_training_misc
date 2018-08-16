@@ -1,11 +1,11 @@
-from pytorch_trim_utils.layer_pruning_utils import CONV_WEIGHT, CONV_BIAS, get_conv_coe_handle
+from pytorch_trim_utils.layer_pruning_utils import LAYER_WEIGHT, LAYER_BIAS, get_coe_handle
 import numpy as np
 
 def magnitude_based_filter_select(conv, **kwargs):
     # we find the filter with the largest sum of absolute value of the element in the weight
-    filter_weight = get_conv_coe_handle(conv, CONV_WEIGHT)
+    filter_weight = get_coe_handle(conv, LAYER_WEIGHT)
     if conv.bias is not None:
-        filter_bias = get_conv_coe_handle(conv, CONV_BIAS)
+        filter_bias = get_coe_handle(conv, LAYER_BIAS)
     else:
         filter_bias = np.zeros(filter_weight.shape[0])
     weight_sums = [np.sum(np.absolute(filter_weight[i, ...])) for i in range(filter_weight.shape[0])]
