@@ -2,48 +2,84 @@ import torch
 from torch import nn as nn
 
 from pytorch_trim_utils.common_utils import generate_trimed_weight_at_axis
-from pytorch_trim_utils import SRC_LAYER, DST_LAYER, GPU_TARGET, CPU_TARGET
+from pytorch_trim_utils import GPU_TARGET, CPU_TARGET
 
 LAYER_WEIGHT = 0
 LAYER_BIAS = 1
 
-def populate_pruned_conv_coe_tensor(src_conv, new_src_conv, filter_removal_indices_ordered,
-                                    weight_device, layer_role,
-                                    coe_type):
-    assert layer_role == DST_LAYER or layer_role == SRC_LAYER, 'unrecognized trim dim'
+def find_prune_multiplier(layer, src_layer=None):
+    if src_layer is None:
+        pass
+
+
+
+# conv population
+def populate_pruned_conv_coe_tensor(original_conv, new_conv, filter_removal_indices_ordered,
+                                    weight_device, coe_type, src_layer=None):
     assert coe_type == LAYER_WEIGHT or coe_type == LAYER_BIAS, 'unrecognized coe type'
-    original_conv_coe = get_coe_handle(src_conv, coe_type)
-    new_conv_coe = get_coe_handle(new_src_conv, coe_type)
-    if layer_role == SRC_LAYER:
+    original_conv_coe = get_coe_handle(original_conv, coe_type)
+    new_conv_coe = get_coe_handle(new_conv, coe_type)
+    if src_layer is None:
         original_conv_coe_trimmed = generate_trimed_weight_at_axis(original_conv_coe,
                                                                    filter_removal_indices_ordered,
                                                                    axis=0)
-    elif layer_role == DST_LAYER and coe_type == LAYER_WEIGHT:
+    elif coe_type == LAYER_WEIGHT:
         original_conv_coe_trimmed = generate_trimed_weight_at_axis(original_conv_coe,
                                                                    filter_removal_indices_ordered,
                                                                    axis=1)
     else:
         original_conv_coe_trimmed = original_conv_coe
     new_conv_coe[...] = original_conv_coe_trimmed
-    commit_coe(new_src_conv, new_conv_coe, weight_device, coe_type)
+    commit_coe(new_conv, new_conv_coe, weight_device, coe_type)
+
+def populate_pruned_linear_coe_tensor(original_linear, new_linear, filter_removal_indices_ordered,
+                                      weight_device, coe_type, src_layer=None):
+    assert coe_type == LAYER_WEIGHT or coe_type == LAYER_BIAS, 'unrecognized coe type'
+    original_linear_coe = get_coe_handle(original_linear, coe_type)
+    new_linear_coe = get_coe_handle(new_linear, coe_type)
+    if src_layer is None:
+        original_linear_coe_trimmed = generate_trimed_weight_at_axis(original_linear_coe,
+                                                                   filter_removal_indices_ordered,
+                                                                   axis=0)
+    elif coe_type == LAYER_WEIGHT:
+        if isinstance(src_layer, nn.Conv2d):
+            # here each removed index in the source translate to the
+            #FIXME:
+        elif isinstance(src_layer, nn.Linear):
+            original_conv_coe_trimmed = generate_trimed_weight_at_axis(original_linear_coe,
+                                                                       filter_removal_indices_ordered,
+                                                                       axis=1)
+    else:
+        original_linear_coe_trimmed = original_linear_coe
+    new_linear_coe[...] = original_linear_coe_trimmed
+    commit_coe(new_linear, new_linear_coe, weight_device, coe_type)
 
 
-def init_pruned_layer(layer, weight_device, filter_indices_removal_ordered, layer_role, src_layer=None):
-    assert layer_role == DST_LAYER or layer_role == SRC_LAYER
-    if isinstance(layer, nn.Conv2d):
+def init_pruned_layer(original_layer, weight_device, filter_indices_removal_ordered, src_layer=None):
+    if isinstance(original_layer, nn.Conv2d):
         layer_init_fn = init_conv_layer
-    elif isinstance(layer, nn.Linear):
+    elif isinstance(original_layer, nn.Linear):
         layer_init_fn = init_linear_layer
-    return layer_init_fn(layer,weight_device,filter_indices_removal_ordered,layer_role, src_layer)
+    return layer_init_fn(original_layer, weight_device, filter_indices_removal_ordered, src_layer)
+
+
+def populate_pruned_layer(new_layer, original_layer, filter_removal_indices_ordered, weight_device, src_layer=None):
+
+    populate_pruned_conv_coe_tensor(original_layer, new_layer, filter_removal_indices_ordered, weight_device,
+                                    LAYER_WEIGHT, src_layer)
+    if new_layer.bias is not None:
+        populate_pruned_conv_coe_tensor(original_layer, new_layer, filter_removal_indices_ordered,
+                                        weight_device, LAYER_BIAS, src_layer)
+
+
 
 
 # Linear layer stuff
-def init_linear_layer(original_linear, weight_device, filter_indices_removal_ordered, layer_role, src_layer):
+def init_linear_layer(original_linear, weight_device, filter_indices_removal_ordered, src_layer):
     num_filters_to_remove = len(filter_indices_removal_ordered)
-    assert layer_role == DST_LAYER or layer_role == SRC_LAYER
     in_features = original_linear.in_features
     out_features = original_linear.out_features
-    if layer_role == SRC_LAYER:
+    if src_layer is None:
         out_features -= num_filters_to_remove
     else:
         if isinstance(src_layer, nn.Linear):
@@ -57,12 +93,11 @@ def init_linear_layer(original_linear, weight_device, filter_indices_removal_ord
 
 
 # CONV layer stuff
-def init_conv_layer(original_conv, weight_device, filter_indices_removal_ordered, layer_role, src_layer):
+def init_conv_layer(original_conv, weight_device, filter_indices_removal_ordered, src_layer):
     num_filters_to_remove = len(filter_indices_removal_ordered)
-    assert layer_role == DST_LAYER or layer_role == SRC_LAYER
     original_in_channel = original_conv.in_channels
     original_out_channel = original_conv.out_channels
-    if layer_role == SRC_LAYER:
+    if src_layer is None:
         original_out_channel -= num_filters_to_remove
     else:
         assert isinstance(src_layer, nn.Conv2d)
@@ -76,38 +111,17 @@ def init_conv_layer(original_conv, weight_device, filter_indices_removal_ordered
 
 
 
-def populate_pruned_conv_src_consumer_layers(src_conv, new_src_conv, old_consumers, new_consumers,
-                                             filter_removal_indices_ordered, weight_device):
-    populate_pruned_conv_coe_tensor(src_conv, new_src_conv, filter_removal_indices_ordered, weight_device, SRC_LAYER,
-                                    LAYER_WEIGHT)
-    if src_conv.bias is not None:
-        populate_pruned_conv_coe_tensor(src_conv, new_src_conv, filter_removal_indices_ordered,
-                                        weight_device, SRC_LAYER, LAYER_BIAS)
 
-    for old_consumer_conv, new_consumer_conv in zip(old_consumers, new_consumers):
-        populate_pruned_conv_coe_tensor(old_consumer_conv, new_consumer_conv, filter_removal_indices_ordered,
-                                        weight_device, DST_LAYER, LAYER_WEIGHT)
-        if old_consumer_conv.bias is not None:
-            populate_pruned_conv_coe_tensor(old_consumer_conv, new_consumer_conv, filter_removal_indices_ordered,
-                                            weight_device, DST_LAYER, LAYER_BIAS)
 # end of conv stuff
 
 
+def acquire_coe(layer, coe_type):
+    assert coe_type == LAYER_WEIGHT or coe_type == LAYER_BIAS
+    return layer.weight if coe_type == LAYER_WEIGHT else layer.bias
 
 def get_coe_handle(conv, coe_type):
-    if coe_type == LAYER_WEIGHT:
-        return conv.weight.data.cpu().numpy()
-    elif coe_type == LAYER_BIAS:
-        return conv.bias.data.cpu().numpy()
-    else:
-        assert False, 'unrecognized coefficient type in conv layers'
-
+    return acquire_coe(conv, coe_type).data.cpu().numpy()
 
 def commit_coe(conv, coefficients, target_device, coe_type):
-    if target_device.type == GPU_TARGET:
-        if coe_type == LAYER_WEIGHT:
-            conv.weight.data = torch.from_numpy(coefficients).cuda()
-        elif coe_type == LAYER_BIAS:
-            conv.bias.data = torch.from_numpy(coefficients).cuda()
-        else:
-            assert False, 'unrecognized coefficient type in conv layers'
+    commit_fn = lambda coe : torch.from_numpy(coe).cuda() if target_device == GPU_TARGET else torch.from_numpy(coe)
+    acquire_coe(conv, coe_type).data = commit_fn(coefficients)

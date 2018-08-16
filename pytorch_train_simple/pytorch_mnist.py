@@ -5,7 +5,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import argparse
 from torchvision import datasets, transforms
-from pytorch_trim_utils.prune_utils import pruning_conv_filters
+from pytorch_trim_utils.prune_utils import prune_src_layer_filters, prune_dst_layer_filters
 from pytorch_trim_utils.filter_select_utils import magnitude_based_filter_select
 
 class Net(nn.Module):
@@ -76,7 +76,7 @@ def main():
                         help='learning rate (default: 0.0005)')
     parser.add_argument('--momentum', type=float, default=0.5, metavar='M',
                         help='SGD momentum (default: 0.5)')
-    parser.add_argument('--no-cuda', action='store_true', default=False,
+    parser.add_argument('--no-cuda', action='store_true', default=True,
                         help='disables CUDA training')
     parser.add_argument('--seed', type=int, default=1, metavar='S',
                         help='random seed (default: 1)')
@@ -115,16 +115,16 @@ def main():
         test(args, model, device, test_loader)
 
     original_conv1 = model.conv1
-    original_consumers = [model.conv2]
-    new_conv1, [new_consumer_conv] = pruning_conv_filters(src_conv=original_conv1, consumer_convs=original_consumers,
-                                                          weight_device=device, selector=magnitude_based_filter_select,
-                                                          num=6 )
+    original_conv2 = model.conv2
+
+    new_conv1, filter_removal_indices_ordered = prune_src_layer_filters(original_conv1, device, magnitude_based_filter_select, num=7)
+    new_conv2 = prune_dst_layer_filters(original_conv2, device, filter_removal_indices_ordered, original_conv1)
 
     del model.conv1
     del model.conv2
 
     model.conv1 = new_conv1
-    model.conv2 = new_consumer_conv
+    model.conv2 = new_conv2
     sys.stdin.read(1)
     for param in model.parameters():
         print(param.data.size())
